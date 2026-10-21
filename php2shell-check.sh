@@ -19,6 +19,7 @@
 #
 # Project:  https://github.com/msoni11/msphp2shell
 # Issues:   https://github.com/msoni11/msphp2shell/issues
+# Help:     ms@taketwotechnologies.com
 #
 # References:
 #   https://www.php.net/archive/2026.php#2026-10-21-5
@@ -482,6 +483,7 @@ say ""
 say "Limits: version and changelog checks cannot see every vendor back-port. If a build is flagged"
 say "but your vendor says it is patched, trust the vendor advisory and re-check later."
 say "Wrong result? Report it: https://github.com/msoni11/msphp2shell/issues"
+say "Need help? Email ms@taketwotechnologies.com"
 
 if [ "$AT_RISK" -eq 1 ]; then exit 1
 elif [ "$COUNT_UNKNOWN" -gt 0 ]; then exit 2

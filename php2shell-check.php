@@ -11,6 +11,7 @@
  * Read-only. It sends no exploit traffic and changes nothing.
  * Written to run on old PHP (5.4+) too, since those are the most exposed.
  * Project: https://github.com/msoni11/msphp2shell
+ * Help:    ms@taketwotechnologies.com
  * License: MIT
  */
 
@@ -72,4 +73,5 @@ if (strpos($status, 'AT RISK') === 0) {
         echo "  Optional: turn session.upload_progress.enabled Off if your site does not use it.\n";
     }
 }
+echo "\nWrong result? https://github.com/msoni11/msphp2shell/issues  |  Need help? ms@taketwotechnologies.com\n";
 echo "\n>>> Now DELETE this file from your server. <<<\n";

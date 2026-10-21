@@ -117,6 +117,11 @@ Distro back-ports vary a lot. If the script says "at risk" on a patched server (
 reverse), please [open a "Wrong result" issue](https://github.com/msoni11/msphp2shell/issues/new?template=wrong-result.md)
 with your OS and PHP package details. Pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Need help?
+
+If you need help reading the results or fixing an at-risk server, email
+[ms@taketwotechnologies.com](mailto:ms@taketwotechnologies.com).
+
 ## Limitations
 
 - Version and changelog checks cannot see every vendor back-port. If a build is
