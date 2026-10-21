@@ -1,4 +1,8 @@
-# php2shell-check
+# msphp2shell
+
+[![CI](https://github.com/msoni11/msphp2shell/actions/workflows/ci.yml/badge.svg)](https://github.com/msoni11/msphp2shell/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 
 A free, **read-only** checker that tells you whether your server is exposed to
 **PHP2Shell** (CVE-2026-109618 and CVE-2026-109619), and what to do next.
@@ -34,10 +38,20 @@ nothing on your system. Read the script before running it; it is one file.
 
 ## Quick start (servers with SSH)
 
+Download just the script:
+
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/<your-github-user>/msphp2shell/main/php2shell-check.sh
+curl -fsSLO https://raw.githubusercontent.com/msoni11/msphp2shell/main/php2shell-check.sh
 less php2shell-check.sh            # review it first
 chmod +x php2shell-check.sh
+sudo ./php2shell-check.sh
+```
+
+Or clone the repository:
+
+```bash
+git clone https://github.com/msoni11/msphp2shell.git
+cd msphp2shell
 sudo ./php2shell-check.sh
 ```
 
@@ -61,7 +75,8 @@ Fleet example: `for h in $(cat hosts); do ssh "$h" 'sudo bash -s -- --no-color' 
 
 ## Shared hosting (no SSH)
 
-Use `php2shell-check.php`:
+Use [`php2shell-check.php`](https://github.com/msoni11/msphp2shell/blob/main/php2shell-check.php)
+(download it from the repo, or [raw](https://raw.githubusercontent.com/msoni11/msphp2shell/main/php2shell-check.php)):
 
 1. Open it and change `ACCESS_KEY` to a long random string.
 2. Upload it under a hard-to-guess name.
@@ -96,6 +111,12 @@ so if it says "at risk", ask your host whether they have patched PHP for both CV
    find any, rotate database passwords and API keys, and consider rebuilding.
 5. **Re-run** the script to confirm.
 
+## Found a wrong result?
+
+Distro back-ports vary a lot. If the script says "at risk" on a patched server (or the
+reverse), please [open a "Wrong result" issue](https://github.com/msoni11/msphp2shell/issues/new?template=wrong-result.md)
+with your OS and PHP package details. Pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Limitations
 
 - Version and changelog checks cannot see every vendor back-port. If a build is
@@ -112,4 +133,5 @@ so if it says "at risk", ask your host whether they have patched PHP for both CV
 
 ## License
 
-MIT. Provided as-is, with no warranty. This is not an official PHP project.
+[MIT](LICENSE). Provided as-is, with no warranty. This is not an official PHP project.
+Security issues with this tool: see [SECURITY.md](SECURITY.md).

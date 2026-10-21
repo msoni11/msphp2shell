@@ -17,6 +17,9 @@
 #   - It never sends exploit traffic and never tries to trigger the bug.
 #   - It changes nothing on the system.
 #
+# Project:  https://github.com/msoni11/msphp2shell
+# Issues:   https://github.com/msoni11/msphp2shell/issues
+#
 # References:
 #   https://www.php.net/archive/2026.php#2026-10-21-5
 #   https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w
@@ -47,7 +50,7 @@ USE_COLOR=1
 # ---------------------------------------------------------------- arguments --
 usage() {
   cat <<EOF
-php2shell-check.sh v${TOOL_VERSION}
+php2shell-check.sh v${TOOL_VERSION}  (https://github.com/msoni11/msphp2shell)
 Read-only checker for PHP2Shell (CVE-2026-109618, CVE-2026-109619).
 
 Usage: sudo ./php2shell-check.sh [options]
@@ -456,6 +459,7 @@ fi
 say ""
 say "Limits: version and changelog checks cannot see every vendor back-port. If a build is flagged"
 say "but your vendor says it is patched, trust the vendor advisory and re-check later."
+say "Wrong result? Report it: https://github.com/msoni11/msphp2shell/issues"
 
 if [ "$COUNT_RISK" -gt 0 ] || [ "$STALE_PROCS" -eq 1 ]; then exit 1
 elif [ "$COUNT_UNKNOWN" -gt 0 ]; then exit 2

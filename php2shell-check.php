@@ -10,6 +10,7 @@
  *
  * Read-only. It sends no exploit traffic and changes nothing.
  * Written to run on old PHP (5.4+) too, since those are the most exposed.
+ * Project: https://github.com/msoni11/msphp2shell
  * License: MIT
  */
 
