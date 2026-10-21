@@ -1,6 +1,5 @@
 # msphp2shell
 
-[![CI](https://github.com/msoni11/msphp2shell/actions/workflows/ci.yml/badge.svg)](https://github.com/msoni11/msphp2shell/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 
