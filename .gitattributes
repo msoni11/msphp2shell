@@ -1,0 +1,5 @@
+# Shell and PHP must keep Unix line endings or they break on servers
+*.sh   text eol=lf
+*.php  text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
