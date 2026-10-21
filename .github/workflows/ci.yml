@@ -37,3 +37,16 @@ jobs:
           code=$?
           echo "exit code: $code"
           [ "$code" -le 3 ]
+
+  smoke-test-macos:
+    # macOS ships bash 3.2, which catches bash-4-only syntax
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run scanner with /bin/bash 3.2
+        run: |
+          set +e
+          /bin/bash ./php2shell-check.sh --no-color --no-logs --scan-dir "$GITHUB_WORKSPACE"
+          code=$?
+          echo "exit code: $code"
+          [ "$code" -le 3 ]

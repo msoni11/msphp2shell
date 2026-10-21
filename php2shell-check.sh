@@ -30,7 +30,7 @@
 
 set -u
 
-TOOL_VERSION="1.0.0"
+TOOL_VERSION="1.0.1"
 CVE_RE='CVE-2026-10961[89]'
 
 # Upstream fixed releases (PHP advisory, 2026-10-21)
@@ -174,8 +174,12 @@ ini_value() {
 }
 
 # --------------------------------------------------------------- discovery --
-declare -A SEEN=()
+# Plain newline-separated lists instead of associative arrays, so the script
+# also runs on bash 3.2 (macOS, old CentOS).
+SEEN_LIST=$'\n'
 TARGETS=()
+
+in_list()  { case "$1" in *$'\n'"$2"$'\n'*) return 0 ;; esac; return 1; }
 
 add_target() {
   local p="$1" real
@@ -186,8 +190,8 @@ add_target() {
   case "$(basename "$real")" in
     php-config*|phpize*|phpdbg*|php*.ini) return 0 ;;
   esac
-  if [ -z "${SEEN[$real]+x}" ]; then
-    SEEN[$real]=1
+  if ! in_list "$SEEN_LIST" "$real"; then
+    SEEN_LIST="$SEEN_LIST$real"$'\n'
     TARGETS+=("$real")
   fi
 }
@@ -234,6 +238,7 @@ discover
 
 COUNT_RISK=0; COUNT_UNKNOWN=0; COUNT_OK=0
 MODPHP_FOUND=0; STALE_PROCS=0; UPLOAD_PROGRESS_ON=0
+DOCKER_FOUND=0; DOCKER_RISK=0
 
 # --------------------------------------------------------- 1. PHP builds ----
 header "1. PHP builds on this host"
@@ -241,7 +246,7 @@ if [ "${#TARGETS[@]}" -eq 0 ]; then
   info "No PHP binaries found in common locations."
 fi
 
-for f in "${TARGETS[@]}"; do
+for f in ${TARGETS[@]+"${TARGETS[@]}"}; do
   v="$(php_version_of "$f")"
   sapi="$(php_sapi_of "$f")"
   [ -n "$v" ] || { warn "$f - could not read version"; COUNT_UNKNOWN=$((COUNT_UNKNOWN+1)); continue; }
@@ -272,19 +277,19 @@ done
 # --------------------------------------------- 2. What is serving traffic ---
 header "2. Running PHP processes and web server"
 if [ -d /proc ]; then
-  declare -A EXE_SEEN=()
+  EXE_SEEN=$'\n'; exe_count=0
   for pid in $(pgrep -f 'php|lsphp' 2>/dev/null); do
     exe="$(readlink "/proc/$pid/exe" 2>/dev/null)" || continue
     case "$exe" in *php*) ;; *) continue ;; esac
-    [ -z "${EXE_SEEN[$exe]+x}" ] || continue
-    EXE_SEEN[$exe]=1
+    in_list "$EXE_SEEN" "$exe" && continue
+    EXE_SEEN="$EXE_SEEN$exe"$'\n'; exe_count=$((exe_count+1))
     case "$exe" in
       *" (deleted)")
         bad "Process $pid runs a PHP binary that was replaced on disk: ${exe% (deleted)}"
         bad "  -> the update is installed but this service was NOT restarted"
         STALE_PROCS=1 ;;
       *)
-        if [ -z "${SEEN[$exe]+x}" ]; then
+        if ! in_list "$SEEN_LIST" "$exe"; then
           rv="$(php_version_of "$exe")"
           info "Running: $exe (PHP ${rv:-?}) - not in common paths, status: $(classify_version "${rv:-0}")"
         else
@@ -292,7 +297,7 @@ if [ -d /proc ]; then
         fi ;;
     esac
   done
-  [ "${#EXE_SEEN[@]}" -gt 0 ] || info "No running PHP processes visible (run with sudo to see all)."
+  [ "$exe_count" -gt 0 ] || info "No running PHP processes visible (run with sudo to see all)."
 fi
 
 for ctl in apache2ctl apachectl httpd; do
@@ -310,7 +315,7 @@ done
 
 # ------------------------------------------------------ 3. Mitigations ------
 header "3. Interim mitigations (from the PHP advisory)"
-for f in "${TARGETS[@]}"; do
+for f in ${TARGETS[@]+"${TARGETS[@]}"}; do
   case "$f" in *.so|*cgi*|*lsphp*) continue ;; esac
   up="$(ini_value "$f" session.upload_progress.enabled)"
   [ -n "$up" ] || continue
@@ -331,7 +336,7 @@ POOL_FILES=( /etc/php-fpm.d/*.conf /etc/php/*/fpm/pool.d/*.conf \
              /opt/plesk/php/*/etc/php-fpm.d/*.conf /usr/local/etc/php-fpm.d/*.conf \
              /www/server/php/*/etc/php-fpm.conf )
 shopt -u nullglob
-for pf in "${POOL_FILES[@]}"; do
+for pf in ${POOL_FILES[@]+"${POOL_FILES[@]}"}; do
   hits="$(grep -nE '^[[:space:]]*php_(admin_)?(value|flag)\[(session\.upload_progress\.enabled|memory_limit|post_max_size)\]' "$pf" 2>/dev/null)"
   [ -n "$hits" ] && info "FPM pool override in $pf:" && printf '%s\n' "$hits" | sed 's/^/        /'
 done
@@ -352,8 +357,14 @@ if [ "${#SCAN_DIRS[@]}" -gt 0 ]; then
     n="$(find "$d" -xdev -type f -name '*.php' -newermt "$REVIEW_SINCE" 2>/dev/null | wc -l)"
     if [ "$n" -gt 0 ]; then
       warn "$n PHP file(s) in $d changed since $REVIEW_SINCE. Confirm they are your own deploys:"
-      find "$d" -xdev -type f -name '*.php' -newermt "$REVIEW_SINCE" -printf '        %TY-%Tm-%Td %TH:%TM  %u  %p\n' 2>/dev/null \
-        | sort -r | head -n 25
+      if find /dev/null -printf '' >/dev/null 2>&1; then
+        find "$d" -xdev -type f -name '*.php' -newermt "$REVIEW_SINCE" -printf '        %TY-%Tm-%Td %TH:%TM  %u  %p\n' 2>/dev/null \
+          | sort -r | head -n 25
+      else  # BSD / macOS find
+        find "$d" -xdev -type f -name '*.php' -newermt "$REVIEW_SINCE" \
+          -exec stat -f '        %Sm  %Su  %N' -t '%Y-%m-%d %H:%M' {} + 2>/dev/null \
+          | sort -r | head -n 25
+      fi
     else
       ok "No PHP files in $d changed since $REVIEW_SINCE."
     fi
@@ -369,7 +380,7 @@ if [ "$CHECK_LOGS" -eq 1 ]; then
          /usr/local/lsws/logs/error.log /www/wwwlogs/*.error.log )
   shopt -u nullglob
   found_logs=0
-  for lf in "${LOGS[@]}"; do
+  for lf in ${LOGS[@]+"${LOGS[@]}"}; do
     [ -r "$lf" ] || continue
     found_logs=1
     c="$(grep -c 'Allowed memory size of' "$lf" 2>/dev/null || true)"
@@ -389,15 +400,19 @@ fi
 if [ "$CHECK_DOCKER" -eq 1 ]; then
   header "6. Docker containers"
   if command -v docker >/dev/null 2>&1; then
-    docker ps --format '{{.ID}} {{.Names}}' 2>/dev/null | while read -r cid cname; do
+    while read -r cid cname; do
+      [ -n "$cid" ] || continue
       line="$(docker exec "$cid" sh -c 'php -v 2>/dev/null || php-fpm -v 2>/dev/null' 2>/dev/null | head -n1)"
       cv="$(printf '%s' "$line" | grep -oE '^PHP [0-9]+\.[0-9]+\.[0-9]+' | awk '{print $2}')"
       [ -n "$cv" ] || continue
+      DOCKER_FOUND=$((DOCKER_FOUND+1))
       case "$(classify_version "$cv")" in
         FIXED|NEWER) ok   "$cname: PHP $cv" ;;
-        *)           bad  "$cname: PHP $cv - rebuild from a patched base image and redeploy" ;;
+        *)           bad  "$cname: PHP $cv - rebuild from a patched base image and redeploy"
+                     DOCKER_RISK=$((DOCKER_RISK+1)) ;;
       esac
-    done
+    done < <(docker ps --format '{{.ID}} {{.Names}}' 2>/dev/null)
+    [ "$DOCKER_FOUND" -gt 0 ] || info "No running containers with PHP found (or no access to docker)."
   else
     info "docker not found."
   fi
@@ -405,19 +420,24 @@ fi
 
 # ------------------------------------------------------------ Summary -------
 header "Result"
-if [ "${#TARGETS[@]}" -eq 0 ]; then
+if [ "${#TARGETS[@]}" -eq 0 ] && [ "$DOCKER_FOUND" -eq 0 ]; then
   say "  No PHP was found. If PHP runs in containers, re-run with --docker."
   exit 3
 fi
 
-if [ "$COUNT_RISK" -gt 0 ] || [ "$STALE_PROCS" -eq 1 ]; then
+AT_RISK=0
+{ [ "$COUNT_RISK" -gt 0 ] || [ "$STALE_PROCS" -eq 1 ] || [ "$DOCKER_RISK" -gt 0 ]; } && AT_RISK=1
+
+if [ "$AT_RISK" -eq 1 ]; then
   msg="${COUNT_RISK} PHP build(s) need updating"
   [ "$STALE_PROCS" -eq 1 ] && msg="$msg; some services need a restart"
+  [ "$DOCKER_RISK" -gt 0 ] && msg="$msg; ${DOCKER_RISK} container(s) need rebuilding"
   say "  ${RED}${BLD}AT RISK${RST}: $msg."
 elif [ "$COUNT_UNKNOWN" -gt 0 ]; then
   say "  ${YEL}${BLD}NEEDS REVIEW${RST}: ${COUNT_UNKNOWN} build(s) could not be classified."
 else
   say "  ${GRN}${BLD}PATCHED${RST}: every PHP build found has the fix."
+  [ "${#TARGETS[@]}" -gt 0 ] || say "  (Only container PHP was found on this host.)"
 fi
 
 header "Next steps"
@@ -435,9 +455,11 @@ if [ "$COUNT_RISK" -gt 0 ]; then
                                say "     RHEL family:   sudo dnf upgrade --refresh 'php*'   (Remi SCL: 'php8*-php*')" ;;
     *" alpine "*)              say "     Alpine:        apk update && apk upgrade" ;;
   esac
+  if command -v brew >/dev/null 2>&1; then say "     Homebrew:      brew update && brew upgrade php"; fi
   say "     If your distro has not shipped a fix yet, apply step 3 now and watch its security feed."
 fi
-if [ "$COUNT_RISK" -gt 0 ] || [ "$STALE_PROCS" -eq 1 ]; then
+if [ "$AT_RISK" -eq 1 ]; then
+  [ "$DOCKER_RISK" -gt 0 ] && say "  -  Containers: rebuild images from a patched php base image and redeploy."
   say "  2. Restart every PHP service so the new binary is loaded, e.g.:"
   say "       sudo systemctl restart 'php*-fpm.service'    and/or    sudo systemctl restart apache2 (or httpd)"
   say "  3. Until patched, apply the advisory's mitigations:"
@@ -461,6 +483,6 @@ say "Limits: version and changelog checks cannot see every vendor back-port. If 
 say "but your vendor says it is patched, trust the vendor advisory and re-check later."
 say "Wrong result? Report it: https://github.com/msoni11/msphp2shell/issues"
 
-if [ "$COUNT_RISK" -gt 0 ] || [ "$STALE_PROCS" -eq 1 ]; then exit 1
+if [ "$AT_RISK" -eq 1 ]; then exit 1
 elif [ "$COUNT_UNKNOWN" -gt 0 ]; then exit 2
 else exit 0; fi
