@@ -37,7 +37,7 @@ if (isset($fixed[$mm])) {
 } elseif (version_compare($v, '8.6.0', '>=')) {
     $status = 'PATCHED';
 } else {
-    $status = 'AT RISK (end-of-life branch, no upstream fix)';
+    $status = 'AT RISK (end-of-life branch, no official PHP release fixes it)';
 }
 
 $upload = ini_get('session.upload_progress.enabled');
@@ -51,7 +51,11 @@ echo "Status        : $status\n\n";
 
 echo "Settings\n";
 echo "  session.upload_progress.enabled = " . ($uploadOn ? 'On   <- advisory: turn Off' : 'Off') . "\n";
-echo "  memory_limit                    = " . ini_get('memory_limit') . "\n";
+if (PHP_MAJOR_VERSION == 8 && PHP_MINOR_VERSION == 5) {
+    $fb = in_array(strtolower((string) ini_get('fatal_error_backtraces')), array('1', 'on'), true);
+    echo "  fatal_error_backtraces          = " . ($fb ? 'On   <- advisory: turn Off' : 'Off') . "\n";
+}
+echo "  memory_limit                    = " . ini_get('memory_limit') . (ini_get('memory_limit') === '-1' ? '' : '   <- advisory: -1 (ask your host)') . "\n";
 echo "  post_max_size                   = " . ini_get('post_max_size') . "\n";
 echo "  upload_max_filesize             = " . ini_get('upload_max_filesize') . "\n\n";
 
@@ -65,6 +69,8 @@ if (strpos($status, 'AT RISK') === 0) {
     echo "     \"Is PHP on my account patched for CVE-2026-109618 and CVE-2026-109619?\"\n";
     echo "  3. If your panel allows php.ini options, set session.upload_progress.enabled = Off.\n";
     echo "     Do not rely on ini_set() or .user.ini for this; the advisory says they apply too late.\n";
+    echo "     On PHP 8.5 also set fatal_error_backtraces = Off. These only reduce exposure;\n";
+    echo "     updating is the only complete fix.\n";
     echo "  4. Check for unknown .php files in your site folders and change database and\n";
     echo "     admin passwords if you find anything unexpected.\n";
 } else {

@@ -13,7 +13,8 @@ even runs. It affects PHP 5.4 through 8.5, under PHP-FPM, mod_php, CGI,
 LiteSpeed and FrankenPHP alike. Exploitation in the wild has been reported.
 
 **Fixed upstream in:** PHP 8.5.12, 8.4.27, 8.3.36, 8.2.35.
-PHP 5.x, 7.x, 8.0 and 8.1 get no upstream fix.
+PHP 5.x, 7.x, 8.0 and 8.1 get no official release; PHP published source-only
+back-ports for 7.4, 8.0 and 8.1 that OS vendors may ship.
 
 ## What this tool does
 
@@ -26,7 +27,8 @@ PHP 5.x, 7.x, 8.0 and 8.1 get no upstream fix.
 - Flags PHP services that were updated on disk but **never restarted**.
 - Detects mod_php, the highest-risk setup.
 - Checks the advisory's interim mitigations (`session.upload_progress.enabled`,
-  `post_max_size`, FPM pool overrides).
+  `memory_limit`, `post_max_size`, `upload_max_filesize`, `fatal_error_backtraces`
+  on 8.5, FPM pool overrides).
 - Optionally reviews web roots, error logs and Docker containers.
 - Prints a clear verdict and next steps for your distro or control panel.
 
@@ -92,7 +94,7 @@ so if it says "at risk", ask your host whether they have patched PHP for both CV
 | `[OK] patched upstream release` | Version includes the fix | None |
 | `[OK] vendor back-port found` | Your distro patched an older version number | None |
 | `[RISK] older than the fixed release` | Vulnerable | Update and restart |
-| `[RISK] end-of-life branch` | 5.x / 7.x / 8.0 / 8.1, no upstream fix | Move to a supported branch, or confirm a vendor back-port |
+| `[RISK] end-of-life branch` | 5.x / 7.x / 8.0 / 8.1, no official release | Move to a supported branch, or confirm a vendor back-port |
 | `[RISK] binary was replaced on disk` | Update installed, service still running the old code | Restart PHP-FPM / Apache |
 | `[WARN] session.upload_progress.enabled = On` | One confirmed attack path is open | Turn it off in `php.ini` or the FPM pool |
 
@@ -100,11 +102,16 @@ so if it says "at risk", ask your host whether they have patched PHP for both CV
 
 1. **Update PHP** through your OS or control panel; the script prints the command.
 2. **Restart** every PHP service (`php*-fpm`, `apache2`/`httpd`, `lsws`).
-3. **Until patched**, apply the advisory's mitigations:
-   `session.upload_progress.enabled = 0` (in `php.ini` or the FPM pool,
-   not `ini_set()` or `.user.ini`), remove invalid per-directory PHP settings
-   that raise warnings, keep `post_max_size` low, and move off mod_php. A WAF
-   helps but does not replace patching.
+3. **Until patched**, apply the advisory's mitigations. PHP says they only
+   reduce exposure; updating is the only complete fix.
+   - `session.upload_progress.enabled = 0` in `php.ini` or the FPM pool
+     (not `ini_set()` or `.user.ini`); on PHP 8.5 also `fatal_error_backtraces = 0`.
+   - `memory_limit = -1` via `php_admin_value`, with a container/cgroup memory
+     limit (not `RLIMIT_AS`/`RLIMIT_DATA`).
+   - `post_max_size` 8M without uploads, 32M with; `upload_max_filesize` below it.
+   - Limit request size and field/part/header counts at the web server or proxy.
+   - Remove invalid per-directory PHP settings that raise warnings, and move off mod_php.
+   - Restart all PHP workers. A WAF helps but does not replace patching.
 4. **Check for compromise**, since attacks began before patches shipped:
    unknown PHP files, cron jobs, or processes running as the web user. If you
    find any, rotate database passwords and API keys, and consider rebuilding.

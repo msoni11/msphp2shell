@@ -31,7 +31,7 @@
 
 set -u
 
-TOOL_VERSION="1.0.1"
+TOOL_VERSION="1.1.0"
 CVE_RE='CVE-2026-10961[89]'
 
 # Upstream fixed releases (PHP advisory, 2026-10-21)
@@ -168,6 +168,21 @@ backport_evidence() {
   return 1
 }
 
+# Converts an ini size (8M, 128K, 1G, -1) to bytes; prints nothing if unparsable
+ini_bytes() {
+  local v n mul
+  v="$(printf '%s' "$1" | tr -d '[:space:]')"
+  case "$v" in
+    -1) echo -1; return ;;
+    *[0-9][kK]) n="${v%?}"; mul=1024 ;;
+    *[0-9][mM]) n="${v%?}"; mul=1048576 ;;
+    *[0-9][gG]) n="${v%?}"; mul=1073741824 ;;
+    *) n="$v"; mul=1 ;;
+  esac
+  case "$n" in ''|*[!0-9]*) return ;; esac
+  echo $((n * mul))
+}
+
 # Value of an ini setting as PHP itself reports it (CLI / FPM only)
 ini_value() {
   local f="$1" key="$2"
@@ -178,6 +193,7 @@ ini_value() {
 # Plain newline-separated lists instead of associative arrays, so the script
 # also runs on bash 3.2 (macOS, old CentOS).
 SEEN_LIST=$'\n'
+RISK_LIST=$'\n'
 TARGETS=()
 
 in_list()  { case "$1" in *$'\n'"$2"$'\n'*) return 0 ;; esac; return 1; }
@@ -264,11 +280,11 @@ for f in ${TARGETS[@]+"${TARGETS[@]}"}; do
       if ev="$(backport_evidence "$f")"; then
         ok "$label - vendor back-port found ($ev)"; COUNT_OK=$((COUNT_OK+1))
       elif [ "$status" = "EOL" ]; then
-        bad "$label - end-of-life branch, no upstream fix exists; no vendor back-port found"
-        COUNT_RISK=$((COUNT_RISK+1))
+        bad "$label - end-of-life branch, no official PHP release fixes it; no vendor back-port found"
+        COUNT_RISK=$((COUNT_RISK+1)); RISK_LIST="$RISK_LIST$f"$'\n'
       else
         bad "$label - older than the fixed release for $(printf '%s' "$v" | cut -d. -f1,2); no vendor back-port found"
-        COUNT_RISK=$((COUNT_RISK+1))
+        COUNT_RISK=$((COUNT_RISK+1)); RISK_LIST="$RISK_LIST$f"$'\n'
       fi ;;
     *)
       warn "$label - version not recognised, check manually"; COUNT_UNKNOWN=$((COUNT_UNKNOWN+1)) ;;
@@ -322,12 +338,38 @@ for f in ${TARGETS[@]+"${TARGETS[@]}"}; do
   [ -n "$up" ] || continue
   ml="$(ini_value "$f" memory_limit)"
   pm="$(ini_value "$f" post_max_size)"
+  um="$(ini_value "$f" upload_max_filesize)"
+  fv="$(php_version_of "$f")"
+  # Mitigation gaps are only warnings for builds that are still at risk
+  if in_list "$RISK_LIST" "$f"; then gap=warn; else gap=info; fi
+
   case "$up" in
     On|on|1) UPLOAD_PROGRESS_ON=1
-       warn "$f: session.upload_progress.enabled = On (advisory: turn Off)" ;;
+       $gap "$f: session.upload_progress.enabled = On (advisory: 0, CVE-2026-109619)" ;;
     *) ok   "$f: session.upload_progress.enabled = Off" ;;
   esac
-  info "$f: memory_limit = ${ml:-?}, post_max_size = ${pm:-?}"
+  case "$fv" in
+    8.5.*)
+      fb="$(ini_value "$f" fatal_error_backtraces)"
+      case "$fb" in
+        On|on|1) $gap "$f: fatal_error_backtraces = On (advisory for 8.5: 0, CVE-2026-109619)" ;;
+        ?*)      ok   "$f: fatal_error_backtraces = Off" ;;
+      esac ;;
+  esac
+  if [ "$(ini_bytes "${ml:-x}")" = "-1" ]; then
+    ok "$f: memory_limit = -1 (advisory mitigation for CVE-2026-109618; keep a container/cgroup limit)"
+  else
+    $gap "$f: memory_limit = ${ml:-?} (advisory: -1 via php_admin_value, plus a container/cgroup limit, CVE-2026-109618)"
+  fi
+  pb="$(ini_bytes "${pm:-x}")"; ub="$(ini_bytes "${um:-x}")"
+  if [ -n "$pb" ] && { [ "$pb" -eq 0 ] || [ "$pb" -eq -1 ] || [ "$pb" -gt 33554432 ]; }; then
+    $gap "$f: post_max_size = $pm (advisory: 8M without uploads, 32M with)"
+  else
+    info "$f: post_max_size = ${pm:-?}"
+  fi
+  if [ -n "$pb" ] && [ -n "$ub" ] && [ "$pb" -gt 0 ] && [ "$ub" -ge "$pb" ]; then
+    $gap "$f: upload_max_filesize = $um should be below post_max_size = $pm"
+  fi
 done
 
 shopt -s nullglob
@@ -338,7 +380,7 @@ POOL_FILES=( /etc/php-fpm.d/*.conf /etc/php/*/fpm/pool.d/*.conf \
              /www/server/php/*/etc/php-fpm.conf )
 shopt -u nullglob
 for pf in ${POOL_FILES[@]+"${POOL_FILES[@]}"}; do
-  hits="$(grep -nE '^[[:space:]]*php_(admin_)?(value|flag)\[(session\.upload_progress\.enabled|memory_limit|post_max_size)\]' "$pf" 2>/dev/null)"
+  hits="$(grep -nE '^[[:space:]]*php_(admin_)?(value|flag)\[(session\.upload_progress\.enabled|memory_limit|post_max_size|upload_max_filesize|fatal_error_backtraces)\]' "$pf" 2>/dev/null)"
   [ -n "$hits" ] && info "FPM pool override in $pf:" && printf '%s\n' "$hits" | sed 's/^/        /'
 done
 
@@ -394,7 +436,7 @@ if [ "$CHECK_LOGS" -eq 1 ]; then
   done
   [ "$found_logs" -eq 1 ] || info "No readable logs in common locations."
   info "The exploit path involves memory exhaustion and worker crashes. Bursts of these,"
-  info "especially from upload (POST) requests since 20 Oct 2026, are worth investigating."
+  info "especially from upload (POST) requests since 17 Oct 2026 (first reported attempt), are worth investigating."
 fi
 
 # ------------------------------------------------------------- 6. Docker ----
@@ -444,8 +486,9 @@ fi
 header "Next steps"
 if [ "$COUNT_RISK" -gt 0 ]; then
   say "  1. Update PHP now. Upstream fixed releases: ${FIXED_85}, ${FIXED_84}, ${FIXED_83}, ${FIXED_82}."
-  say "     PHP 5.x, 7.x, 8.0 and 8.1 get no upstream fix: move to a supported branch"
-  say "     unless your OS vendor ships a back-port."
+  say "     PHP 5.x, 7.x, 8.0 and 8.1 get no official release: move to a supported branch"
+  say "     unless your OS vendor ships a back-port (PHP published source-only back-ports"
+  say "     for 7.4, 8.0 and 8.1 that vendors and custom builds can apply)."
   if   [ -d /usr/local/cpanel ];  then say "     cPanel:      sudo dnf upgrade 'ea-php*'   (or yum)"; fi
   if   [ -d /opt/alt ];           then say "     CloudLinux:  sudo dnf upgrade 'alt-php*'  (or yum)"; fi
   if   [ -d /usr/local/psa ];     then say "     Plesk:       Tools & Settings > Updates, then confirm the PHP versions"; fi
@@ -453,7 +496,8 @@ if [ "$COUNT_RISK" -gt 0 ]; then
   case " $OS_ID $OS_LIKE " in
     *" debian "*|*" ubuntu "*) say "     Debian/Ubuntu: sudo apt update && sudo apt install --only-upgrade 'php*' 'libapache2-mod-php*'" ;;
     *" rhel "*|*" fedora "*|*" centos "*|*" almalinux "*|*" rocky "*)
-                               say "     RHEL family:   sudo dnf upgrade --refresh 'php*'   (Remi SCL: 'php8*-php*')" ;;
+                               say "     RHEL family:   sudo dnf upgrade --refresh 'php*'   (Remi SCL: 'php8*-php*')"
+                               say "                    Remi had no updates on release day; re-check its repo if you use it." ;;
     *" alpine "*)              say "     Alpine:        apk update && apk upgrade" ;;
   esac
   if command -v brew >/dev/null 2>&1; then say "     Homebrew:      brew update && brew upgrade php"; fi
@@ -464,9 +508,17 @@ if [ "$AT_RISK" -eq 1 ]; then
   say "  2. Restart every PHP service so the new binary is loaded, e.g.:"
   say "       sudo systemctl restart 'php*-fpm.service'    and/or    sudo systemctl restart apache2 (or httpd)"
   say "  3. Until patched, apply the advisory's mitigations:"
+  say "       (PHP says these only reduce exposure; updating is the only complete fix)"
   say "       - session.upload_progress.enabled = 0 in php.ini or the FPM pool (not ini_set/.user.ini)"
-  say "       - remove invalid per-directory PHP settings (.htaccess / PHP_VALUE) that raise warnings"
-  say "       - keep post_max_size low (8M without uploads, 32M with) and limit request size at the proxy"
+  say "       - PHP 8.5: fatal_error_backtraces = 0"
+  say "       - memory_limit = -1 via php_admin_value, with a container/cgroup memory limit that kills"
+  say "         only the worker (not RLIMIT_AS / RLIMIT_DATA)"
+  say "       - keep post_max_size low (8M without uploads, 32M with), upload_max_filesize below it"
+  say "       - limit request size, field, part and header counts at the web server / proxy,"
+  say "         including requests without Content-Length"
+  say "       - remove invalid per-directory PHP settings (.htaccess / PHP_VALUE) that raise warnings;"
+  say "         hiding errors (display_errors, @) does not help"
+  say "       - restart every PHP worker after changing any of these"
   say "       - put a WAF in front if you can (e.g. Cloudflare ships managed rules); it does not replace patching"
   [ "$MODPHP_FOUND" -eq 1 ] && say "       - move off mod_php to PHP-FPM; mod_php is the most exposed setup"
   say "  4. Exploitation has been reported in the wild. Check for compromise:"
